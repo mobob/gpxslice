@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 import argparse
 import collections
 import math
+import copy
 
 # setup our distance calculation functions
 Point = collections.namedtuple('Point', ['lat', 'lon'])
@@ -69,7 +70,7 @@ def slice(sliceArgs):
     for i in range(numLegs):
         newtrk = ET.SubElement(root, 'trk')
         name = ET.SubElement(newtrk, 'name')
-        name.text = 'Leg ' + str(i + 1)
+        name.text = 'Segment ' + str(i + 1)
         trkseg = ET.SubElement(newtrk, 'trkseg')
         legtrksegs.append(trkseg)
 
@@ -94,18 +95,58 @@ def slice(sliceArgs):
                     totalPoints = totalPoints + 1
                     if firstIteration == False:
                         incrementalDistance = gcDist(lastPoint, curPoint)
-                        totalDistance = totalDistance + incrementalDistance
                         legDistance = legDistance + incrementalDistance
-                    if legIndex + 1 < numLegs and legDistance > legDistances[legIndex]:
-                        legIndex = legIndex + 1
-                        print("moving on to next leg: " + str(legIndex + 1) + ", last leg distance: " + str(legDistance))
-                        legDistance = 0.0
+                        totalDistance = totalDistance + incrementalDistance
+                        if legIndex + 1 < numLegs and totalDistance >= legDistanceMarkers[legIndex]: #legDistance >= legDistances[legIndex]:
+                            legIndex = legIndex + 1
+                            print("On to next leg: " + str(legIndex + 1) + ", last leg distance: " + str(legDistance) + ", total: " + str(totalDistance))
+                            legDistance = 0.0
+                            # We actually need to copy this point into the new leg too!
+                            legtrksegs[legIndex].append(trkpt)
                     lastPoint = curPoint
                     firstIteration = False
     print("Total Points: " + str(totalPoints))
     print("Legs with points vs legs provided: (" + str(legIndex + 1) + " / " + str(numLegs) + ")")
     print("Total Distance: " + str(totalDistance))
     tree.write(sliceArgs.outfile)
+
+def outputlegs(outputlegsArgs):
+    # we want to output a new file for each segment
+
+    # do this REAL DUMB. track segment index starting at 1
+    # iterate til we're there, and delete all segments that don't count
+    # then output
+    # first, count segments
+    file = open(outputlegsArgs.infile, "r")
+    tree = ET.parse(file)
+    root = tree.getroot()
+    segmentCount = 0
+    for trk in root:
+        if trk.tag == "{http://www.topografix.com/GPX/1/1}trk":
+            segmentCount = segmentCount + 1
+    file.close()
+    print("found " + str(segmentCount) + " segments to output.")
+    for outputSegment in range(segmentCount):
+        print("about to output segment: " + str(outputSegment + outputlegsArgs.startindex))
+        # parse it all again
+        file = open(outputlegsArgs.infile, "r")
+        tree = ET.parse(outputlegsArgs.infile)
+        root = tree.getroot()
+        segmentIndex = 0
+        newroot = copy.copy(root)
+        for trk in root:
+            if trk.tag != "{http://www.topografix.com/GPX/1/1}trk":
+                continue
+            # remove it if it doesn't match
+            #if segmentIndex != outputSegment:
+            #    root.remove(trk)
+            if segmentIndex != outputSegment:
+                newroot.remove(trk)
+            segmentIndex = segmentIndex + 1
+        # set filename, and output
+        newtree = ET.ElementTree(newroot)
+        newtree.write(outputlegsArgs.outfilestem + str(outputSegment + outputlegsArgs.startindex) + ".gpx")
+        file.close()
 
 def createLegsFile(createlegsfileArgs):
     avgLength = createlegsfileArgs.totalDistance / createlegsfileArgs.numLegs
@@ -130,6 +171,12 @@ sliceParser.add_argument("infile", type=argparse.FileType('r'), help="GPX filena
 sliceParser.add_argument('legDistancesFile', type=argparse.FileType('r'), help='leg distances file name')
 sliceParser.add_argument('outfile', help='output file name')
 sliceParser.set_defaults(func=slice)
+
+outputLegsParser = subparsers.add_parser('splittrks', help='Output trks to seperate GPX files')
+outputLegsParser.add_argument("infile", help="GPX filename to process")
+outputLegsParser.add_argument('outfilestem', help='output file name stem')
+outputLegsParser.add_argument('startindex', type=int, help='starting segment index to output')
+outputLegsParser.set_defaults(func=outputlegs)
 
 createlegsParser = subparsers.add_parser('createlegsfile', help='Create a file with leg distances')
 createlegsParser.add_argument("totalDistance", help="The total distance of the route", type=float)
